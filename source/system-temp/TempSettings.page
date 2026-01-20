@@ -48,6 +48,10 @@ function save_modules($modules) {
   global $drivers_file;
   if ($modules) file_put_contents($drivers_file, preg_replace("/\s|,/", "\n", $modules)); else @unlink($drivers_file);
 }
+function normalize_chip($chip) {
+  // Replace USB HID device identifiers with wildcards (e.g., corsairpsu-hid-3-1 -> corsairpsu-*)
+  return preg_replace('/-hid-\d+-\d+$/i', '-*', $chip);
+}
 function is_module_loaded($module) {
   return exec("lsmod|grep -cm1 '^$module'")>0;
 }
@@ -70,12 +74,12 @@ case 'sensors':
     case 'mb_temp':
     case 'cpu_temp':
       [$chip, $input, $label] = explode("|", $value = preg_match("/.*?\|.*?\|.*?/",$value) ? $value : "||");
-      $content .= strlen($chip) ? sprintf("chip \"%s\"\nlabel \"%s\" \"%s\"\n", $chip, $input, $label) : "";
+      $content .= strlen($chip) ? sprintf("chip \"%s\"\nlabel \"%s\" \"%s\"\n", normalize_chip($chip), $input, $label) : "";
       break;
     case 'array_fan':
       foreach (explode(',',$value) as $fan) {
         [$chip, $input, $label] = explode("|", $fan = preg_match("/.*?\|.*?\|.*?/",$fan) ? $fan : "||");
-        $content .= strlen($chip) ? sprintf("chip \"%s\"\nlabel \"%s\" \"%s\"\n", $chip, $input, $label) : "";
+        $content .= strlen($chip) ? sprintf("chip \"%s\"\nlabel \"%s\" \"%s\"\n", normalize_chip($chip), $input, $label) : "";
       }
       break;
     case 'temp_ignore':
@@ -83,7 +87,7 @@ case 'sensors':
       foreach (explode('#', $value) as $ignore) {
         if (!$ignore) continue;
         [$chip, $input] = explode("|", $ignore);
-        $content .= sprintf("chip \"%s\"\nignore \"%s\"\n", $chip, $input);
+        $content .= sprintf("chip \"%s\"\nignore \"%s\"\n", normalize_chip($chip), $input);
       }
       break;
     }
