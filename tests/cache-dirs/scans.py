@@ -16,15 +16,16 @@ with tempfile.TemporaryDirectory() as temp:
     common = f'''
 {functions}
 log() {{ :; }}
-read_pool_state() {{ php; }}
+read_pool_state() {{ php "${{1:-sample}}"; }}
 php() {{
   if [ "$scenario" = failure ]; then return 1; fi
   echo 'idle 60'
   echo 'blocked 1'
-  if [ "$scenario" = mixed ]; then echo 'root {root}/awake'; fi
+  if [ "$scenario" = mixed ] || {{ [ "$scenario" = hold ] && [ ! -f {root}/hold ]; }}; then echo 'root {root}/awake'; fi
 }}
 find() {{
   printf '%s\\n' "$*" >> {root}/calls
+  if [ "$scenario" = hold ]; then touch {root}/hold; fi
   command find "$@"
 }}
 export -f find
@@ -61,6 +62,23 @@ count_files 3 >/dev/null
     # These are the real daemon entry points; protection must precede root warming.
     loop = text[text.index('  log "cache_dirs started"'):]
     assert loop.index('refresh_scan_roots') < loop.index('find $i -maxdepth 1')
+    # Execute the real loop's scan phases: a cold root warm-up must suppress
+    # recursive scans AND counting in the same pass, before adaptive heuristics.
+    phases = loop[loop.index('    refresh_scan_roots begin'):loop.index('    time_since_disk_access_after_scan_sec=')]
+    (root/'calls').write_text('')
+    (root/'deep-calls').write_text('')
+    code = common + '''
+scenario=hold
+appliedDepth=3
+fnc_time_since_last_disk_access() { echo 0; }
+get_scan_timeout() { echo 30; }
+exists() { return 1; }
+depthMinus20Percent() { echo 2; }
+for pass in 1; do
+''' + phases + '\ndone\n'
+    subprocess.run(['bash', '-c', code], check=True, capture_output=True, text=True)
+    assert len((root/'calls').read_text().splitlines()) == 1, 'only initial root warm-up may reach cold pool'
+    assert not (root/'deep-calls').read_text(), 'deep scan must be skipped immediately after cold warm-up'
     startup = text[text.index('# will update dir_list on each scan, in case new shares have been added\nrefresh_scan_roots'):]
     assert startup.index('refresh_scan_roots') < startup.index('dir_list=$(build_dir_list)')
-print('3 scan scenarios passed: mixed, all asleep, unavailable state; no sleeping/union/cwd scans')
+print('4 scan scenarios passed: mixed, asleep, unavailable state, cold warm-up backoff')

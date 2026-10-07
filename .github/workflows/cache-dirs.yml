@@ -15,6 +15,7 @@ jobs:
           php -l source/cache-dirs/scripts/cache_dirs_state.php
           bash -n source/cache-dirs/scripts/cache_dirs
           php tests/cache-dirs/state.php
+          php tests/cache-dirs/backoff.php
           bash tests/cache-dirs/helper-limit.sh
           python3 tests/cache-dirs/scans.py
           python3 tests/cache-dirs/build_package.py

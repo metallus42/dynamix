@@ -70,6 +70,8 @@ $(function() {
 >
 > This fork skips a managed filesystem while any HDD member is marked spun down by Unraid.
 > Its idle timer uses physical HDD I/O counters, including for ZFS pools without array disks.
+> Physical HDD I/O during a scan pauses that pool for its spindown delay plus 60 seconds of quiet. Fast scans are also checked.
+> New I/O extends the pause; an observed sleep/wake cycle permits warming again.
 > Scanning resumes after Unraid reports every HDD member awake. SSD activity does not reset the HDD idle timer.
 > User-share scanning is suspended while any managed filesystem is skipped, to protect sleeping backing disks.
 > A sleeping filesystem is not refreshed; directory information may be evicted while it sleeps.

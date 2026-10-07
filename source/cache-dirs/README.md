@@ -21,6 +21,21 @@ Counters are stored in `/run`, keyed to the daemon and boot. Startup, reboot,
 drive replacement, counter resets and wake transitions start with zero known
 idle time; SSD I/O is ignored for HDD idle timing.
 
+### Avoiding scan-induced HDD activity
+
+Each discovery, root-warming, recursive-scan and file-counting phase is bracketed
+by physical HDD counter snapshots. Any counter change or in-flight I/O at phase
+end pauses the affected pool, even if the scan was fast. Other pools remain eligible.
+The pause lasts for the configured spindown delay plus 60 seconds without new I/O;
+further activity extends it. An observed sleep followed by an external wake permits
+warming again. Unset per-pool delays inherit the global RAM configuration; disabled
+or unavailable timers use a 31-minute quiet window. The optional user-share scan
+is also suppressed while a pool is held. A RAM-only scan continues normally.
+
+This deliberately treats concurrent application I/O as a reason to back off too: kernel
+counters do not distinguish its source. Checks happen between scan phases, so the first
+cold scan may issue I/O before the pause begins. Holds are per daemon and reset on restart.
+
 ### Limits
 
 This is a best-effort scan policy based on Unraid's reported state, not a lock
@@ -37,6 +52,7 @@ From the repository root:
 
 ```sh
 php tests/cache-dirs/state.php
+php tests/cache-dirs/backoff.php
 bash tests/cache-dirs/helper-limit.sh
 python3 tests/cache-dirs/scans.py
 bash -n source/cache-dirs/scripts/cache_dirs

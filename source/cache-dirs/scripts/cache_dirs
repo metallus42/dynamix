@@ -120,7 +120,7 @@
 #                change disk* to disk[0-9]* to avoid issues with the UD plugin
 # bergware
 ####################################################################################
-version=2.2.8
+version=2.2.8-pool-backoff3
 program_name=$(basename "$0")
 arg_count=$#
 
@@ -238,7 +238,7 @@ io_state="/run/cache_dirs.io.$$"
 state_helper_vmem=$(ulimit -Sv)
 read_pool_state() (
   ulimit -Sv "$state_helper_vmem" || exit 1
-  php -d memory_limit=16M "$state_helper" "$io_state"
+  php -d memory_limit=16M "$state_helper" "$io_state" "${1:-sample}"
 )
 scan_roots=()
 pool_idle=0
@@ -249,7 +249,7 @@ refresh_scan_roots() {
   scan_roots=()
   pool_idle=0
   blocked_roots=1
-  if snapshot=$(read_pool_state); then
+  if snapshot=$(read_pool_state "${1:-sample}"); then
     while read -r kind value; do
       case "$kind" in
         idle) pool_idle=$value ;;
@@ -836,8 +836,9 @@ format_two_digit() {
 }
 
 # will update dir_list on each scan, in case new shares have been added
-refresh_scan_roots
+refresh_scan_roots begin
 dir_list=$(build_dir_list)
+refresh_scan_roots end
 
 if [ "$short_log" = "no" ] ; then
   log_list="$dir_list"
@@ -889,25 +890,7 @@ fi
 logLostCacheHeader
 logCsvHeader
 
-a=0
-while test $a -lt $exclude_array_count
-do
-  list=$(eval ls $array/"${exclude_array[$a]}" $(echo $pools|tr ' ' '\n'|awk '{print $1"\"/${exclude_array[$a]}\""}') 2>/dev/null)
-  if [ "$list" = "" ] ; then
-    syslogerror "ERROR: excluded directory '${exclude_array[$a]}' does not exist."
-  fi
-  a=$((a+1))
-done
-
-a=0
-while test $a -lt $include_array_count
-do
-  list=$(eval ls $array/"${include_array[$a]}" $(echo $pools|tr ' ' '\n'|awk '{print $1"\"/${include_array[$a]}\""}') 2>/dev/null)
-  if [ "$list" = "" ] ; then
-    syslogerror "ERROR: included directory '${include_array[$a]}' does not exist."
-  fi
-  a=$((a+1))
-done
+# Do not validate share existence with ls: a held/asleep pool is intentionally absent.
 
 function get_scan_timeout() {
   if ((fixdepth >= 0)) ; then
@@ -972,7 +955,7 @@ declare -A files_at_depth_map
       fi
     fi
 
-    refresh_scan_roots
+    refresh_scan_roots begin
     if [ ${#scan_roots[@]} -eq 0 ]; then
       sleep "$max_seconds"
       continue
@@ -984,6 +967,8 @@ declare -A files_at_depth_map
       find $i -maxdepth 1 -noleaf >/dev/null 2>/dev/null
     done
 
+    refresh_scan_roots end
+    refresh_scan_roots begin
     time_since_disk_access_before_scan_sec=$(fnc_time_since_last_disk_access)
 
     ############## Here the actual find is executed ################
@@ -994,6 +979,8 @@ declare -A files_at_depth_map
     scanned_depth_msg=""
     # I tried rescan at lower depth if scan timed out, but it hurt cache, some depth levels were unattainable with the lower depth scan enabled, they must have evicted higher depth cache for some reason
     do_deep_scan $appliedDepth $scan_timeout_sec
+    refresh_scan_roots end
+    refresh_scan_roots begin
     # Count number of files at depth, the first time depth is used
     if ! exists "$appliedDepth" in files_at_depth_map ; then
       files_at_depth_map[$appliedDepth]+="$(count_files $appliedDepth)"
@@ -1025,6 +1012,7 @@ declare -A files_at_depth_map
       fi
     fi
 
+    refresh_scan_roots end
     time_since_disk_access_after_scan_sec=$(fnc_time_since_last_disk_access)
     end_time_nano=$(date +%s%N)
 
