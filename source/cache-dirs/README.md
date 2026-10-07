@@ -2,3 +2,50 @@
 
 Dynamix Cache Directories keeps folder information in memory to prevent unnecessary disk spin up.
 Dynamix builds a GUI front-end to allow entering of parameters for the cache_dirs script which is running in the background.
+
+
+## Pool-aware standby fork
+
+This fork tracks physical HDD I/O using `/sys/class/block/*/stat` and uses
+Unraid's `/var/local/emhttp/disks.ini` for mounted filesystem membership and
+spindown state. It works with pool-only ZFS configurations as well as mixed
+array/pool systems, including encrypted pools: the metadata names the physical
+backing devices, so no `zpool`, `zfs`, SMART or block-device probe is needed.
+
+If any HDD member is asleep, missing, or has an unknown state, the entire
+filesystem is excluded from root discovery, root warming, recursive scans and
+file counting. Missing helper/state access fails closed. The optional
+`/mnt/user` scan is skipped when a managed filesystem is blocked, because the
+union can reach that sleeping filesystem. SSD-only pools continue scanning.
+Counters are stored in `/run`, keyed to the daemon and boot. Startup, reboot,
+drive replacement, counter resets and wake transitions start with zero known
+idle time; SSD I/O is ignored for HDD idle timing.
+
+### Limits
+
+This is a best-effort scan policy based on Unraid's reported state, not a lock
+against concurrent spindown. A drive can change state after a snapshot or during
+an already running scan. Use Unraid's normal spindown controls: a direct `hdparm`
+command can leave its cached status stale. Caching stops during sleep, so cached
+names can be evicted and a later user directory listing may wake the pool.
+Application reads, backups and ZFS maintenance can still wake disks. No longer
+sleep-duration claim has been established by a full workload comparison yet.
+
+### Test and build
+
+From the repository root:
+
+```sh
+php tests/cache-dirs/state.php
+python3 tests/cache-dirs/scans.py
+bash -n source/cache-dirs/scripts/cache_dirs
+php -l source/cache-dirs/scripts/cache_dirs_state.php
+python3 tests/cache-dirs/build_package.py
+```
+
+The build refreshes the package and checksum referenced by the fork's plugin
+manifest. The existing plugin name and settings are retained; install this as
+an alternative version, never as a second daemon alongside the original.
+Back up `/boot/config/plugins/dynamix.cache.dirs/` before installing. Roll back
+through the official `unraid/dynamix` plugin manifest, preserving that settings
+backup. Repository creation and packaging do not install the fork on a server.

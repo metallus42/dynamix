@@ -228,8 +228,32 @@ NANO_PR_MS=1000000
 cache_pressure=10
 
 # Array & Pool devices
-array=/mnt/disk[0-9]*
-pools=$(ls -d /mnt/*|grep -Pv '/(disk[0-9]+|disks|user0?)$')
+# Populated from emhttp RAM metadata; globbing /mnt can itself wake disks.
+array=""
+pools=""
+state_helper="$(dirname "$(readlink -f "$0")")/cache_dirs_state.php"
+io_state="/run/cache_dirs.io.$$"
+scan_roots=()
+pool_idle=0
+blocked_roots=1
+
+refresh_scan_roots() {
+  local snapshot kind value
+  scan_roots=()
+  pool_idle=0
+  blocked_roots=1
+  if snapshot=$(php "$state_helper" "$io_state"); then
+    while read -r kind value; do
+      case "$kind" in
+        idle) pool_idle=$value ;;
+        blocked) blocked_roots=$value ;;
+        root) scan_roots+=("$value") ;;
+      esac
+    done <<< "$snapshot"
+  fi
+  # Existing loops use whitespace-separated mount roots (validated by helper).
+  pools="${scan_roots[*]}"
+}
 
 verbose_echo() {
   [ $background = "no" ] && [ $verbose = "yes" ] && echo "$1"
@@ -400,6 +424,7 @@ fi
 function join { local IFS="$1"; shift; echo "$*"; }
 
 build_dir_list() {
+  [ ${#scan_roots[@]} -eq 0 ] && return
   # build a list of directories to cache.
   #   If no "-i" options are given, this will be all the top level directories in $array and $pools
   #   If "-i" entries are given, they will be the only top level dirs cached.
@@ -434,6 +459,7 @@ build_dir_list() {
 }
 
 if (( do_print_file_counts == 1 )) ; then
+  refresh_scan_roots
   dir_list=$(build_dir_list)
   depth_arg=""
   if [ "$maxDepth" -ne "$maxDepthUnbounded" ] ; then
@@ -444,8 +470,11 @@ if (( do_print_file_counts == 1 )) ; then
   fi
   for share_dir in $dir_list
   do
-    echo $share_dir: $(find $array/$share_dir $(echo $pools|tr ' ' '\n'|awk '{print $1"/$share_dir"}') $depth_arg 2>/dev/null | wc -l )
+    for root in "${scan_roots[@]}"; do
+      echo "$root/$share_dir:" $(find "$root/$share_dir" $depth_arg 2>/dev/null | wc -l)
+    done
   done
+  rm -f "$io_state"
   exit 0
 fi
 
@@ -476,6 +505,7 @@ if [ -f "${lockfile}" ] ; then
     else
       echo "$program_name ${lock_pid} is not currently running "
       rm "${lockfile}"
+      rm -f "/run/cache_dirs.io.${lock_pid}"
       exit 0
     fi
   else
@@ -487,6 +517,7 @@ if [ -f "${lockfile}" ] ; then
       # Sleep 1 because it means we will get log info if slow find processes isn't running
       sleep 1;
       killtree "$lock_pid" -KILL
+      rm -f "/run/cache_dirs.io.${lock_pid}"
       exit 0
     else
       echo "$program_name is already running [${lock_pid}]"
@@ -569,25 +600,13 @@ sysctl vm.vfs_cache_pressure=$cache_pressure >/dev/null 2>&1
 
 # use function like this: result=$(fnc_time_since_last_disk_access)
 fnc_time_since_last_disk_access() {
-  # check if array is mounted by checking for disk1 directory
-  if [ -d /mnt/disk1 ] ; then
-    # UnRaid >= 6.1.2 (I think)
-    mdcmd_cmd=/usr/local/sbin/mdcmd
-
-    # rdevLastIO will be non-zero if a disk is spinning, it will be the timestamp of last IO (in seconds since epoch)
-    last=$($mdcmd_cmd status | grep -a rdevLastIO | grep -v '=0')
-    lastAccess="$(echo $last | awk '{t=systime(); gsub("rdevLastIO..=",""); for(i = 1; i <= NF; i++) a[++y]=$i}END{c=asort(a); if (NF > 0) print t-a[NF]; else print 9998; }')"
-    if (( lastAccess > 9999)) ; then
-      echo "9999"
-    else
-      echo "$lastAccess"
-    fi
-    # Code to log all disk ages
-    # ages=$(echo $last | awk '{ t=systime(); for(i = 1; i <= NF; i++){ match($i, /rdevLastIO.([0-9]+)/, capgroups); gsub("rdevLastIO..=","", $i);  print capgroups[1] "=" t-$i } }') #print "diskage" i "=" t-$i
-    # log "Ages: $ages"
+  # State lives in RAM because callers use command substitutions (subshells).
+  # Keep this sample from replacing the targets selected for the current pass.
+  local snapshot
+  if snapshot=$(php "$state_helper" "$io_state"); then
+    awk '$1 == "idle" {print $2}' <<< "$snapshot"
   else
-    # Array is not started
-    echo "9997"
+    echo 0
   fi
 }
 
@@ -704,7 +723,7 @@ do_deep_scan() {
   wait_and_get_exit_codes "${children_pids[@]}"
   (( $DEBUG_THREAD )) && log "Finished all depth scan threads: ${children_pids[@]}"
 
-  if (( include_scan_of_user_share == 1 )) ; then
+  if (( include_scan_of_user_share == 1 && blocked_roots == 0 )) ; then
     current_time_nano_disks_done=$(date +%s%N)
     timepassed_disks_total=$(( (current_time_nano_disks_done - scan_start)/ NANO_PR_MS ))
 
@@ -810,6 +829,7 @@ format_two_digit() {
 }
 
 # will update dir_list on each scan, in case new shares have been added
+refresh_scan_roots
 dir_list=$(build_dir_list)
 
 if [ "$short_log" = "no" ] ; then
@@ -851,7 +871,7 @@ if [ "$concise_log" = "no" ] ; then
   syslog "scan_timeout_sec_busy=$scan_timeout_sec_busy"
   syslog "scan_timeout_sec_stable=$scan_timeout_sec_stable"
   syslog "frequency_of_full_depth_scan_sec=$frequency_of_full_depth_scan_sec"
-  if (( include_scan_of_user_share == 1 )) ; then
+  if (( include_scan_of_user_share == 1 && blocked_roots == 0 )) ; then
     syslog "Including /mnt/user in scan"
   fi
 else
@@ -929,6 +949,9 @@ next_sleep_duration=0
 declare -A files_at_depth_map
 
 {
+  child_io_state="/run/cache_dirs.io.$BASHPID"
+  mv -f "$io_state" "$child_io_state" 2>/dev/null
+  io_state="$child_io_state"
   log "cache_dirs started"
   while [ -f "$lockfile" ]
   do
@@ -942,6 +965,12 @@ declare -A files_at_depth_map
       fi
     fi
 
+    refresh_scan_roots
+    if [ ${#scan_roots[@]} -eq 0 ]; then
+      sleep "$max_seconds"
+      continue
+    fi
+    # Only inspect roots whose complete backing pool is known to be awake.
     # always cache root dirs on each of the disks
     for i in $array $pools
     do
@@ -997,7 +1026,8 @@ declare -A files_at_depth_map
     # perform the directory scan more frequently.
     elapsed_time=$(( end_time_nano-start_time_nano ))
     elapsed_secs=$(( elapsed_time / NANO_PR_SEC ))
-    were_disks_idle_during_scan=$((time_since_disk_access_after_scan_sec>=elapsed_secs))
+    # A sub-second metadata read reports age=0 and elapsed=0; that is busy.
+    were_disks_idle_during_scan=$((time_since_disk_access_after_scan_sec>elapsed_secs))
 
     # Only update avg scan time when disks were idle during scan. This gives us ability to judge whether disks were accessed due to cache_dirs scan even if other processes access disks
     if (( were_disks_idle_during_scan )) ; then
@@ -1197,6 +1227,7 @@ declare -A files_at_depth_map
     prev_sleep_duration=$next_sleep_duration
   done
   # This line will only be printed if for some odd reason the while loop terminates, without cache_dirs -q being executed (such as user deleting run-file)
+  rm -f "$io_state"
   log "cache_dirs stopped"
 } &
 
@@ -1208,7 +1239,7 @@ background_pid=$!
 echo $background_pid > "${lockfile}"
 if [ $background = "no" ] ; then
   # only way to get here is to remove the lock file or kill the background process shell with the while loop
-  trap "syslog '$program_name process $background_pid was terminated via trap'; rm -f $lockfile; killtree $background_pid -KILL 2>/dev/null; exit" INT TERM EXIT
+  trap "syslog '$program_name process $background_pid was terminated via trap'; rm -f $lockfile /run/cache_dirs.io.$background_pid; killtree $background_pid -KILL 2>/dev/null; exit" INT TERM EXIT
   wait
   echo "Stopped"
 else
