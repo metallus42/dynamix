@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as temp:
         (root/name/'Media'/'child').mkdir(parents=True)
         (root/name/'Media'/'child'/'file').write_text('test')
     wrapper = root/'scan-command'
-    wrapper.write_text('#!/bin/bash\nprintf '%s\\n' "$*" >> '+str(root/'deep-calls')+'\nexec find "$@"\n')
+    wrapper.write_text("#!/bin/bash\nprintf '%s\\n' \"$*\" >> "+str(root/'deep-calls')+'\nexec find "$@"\n')
     wrapper.chmod(0o755)
     common = f'''
 {functions}
