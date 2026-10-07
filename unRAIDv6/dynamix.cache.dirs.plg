@@ -3,11 +3,11 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "dynamix.cache.dirs">
 <!ENTITY author    "Bergware">
-<!ENTITY version   "2026.10.07.1">
+<!ENTITY version   "2026.10.07.2">
 <!ENTITY launch    "Settings/FolderCachingSettings">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/metallus42/dynamix/codex/cache-dirs-pool-idle/unRAIDv6/&name;.plg">
 <!ENTITY source    "/boot/config/plugins/&name;/&name;">
-<!ENTITY MD5       "cd209598bdf3c3a5c99b46110747d2d6">
+<!ENTITY MD5       "ca032821b6d08563c99aa2450d88ac88">
 ]>
 
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
@@ -15,7 +15,7 @@
 <CHANGES>
 ##Dynamix Cache Dirs
 
-###2026.10.07.1
+###2026.10.07.2
 - Pool-aware fork: use physical HDD counters for idle detection, including ZFS-only servers.
 - Skip sleeping or unknown pool members before directory discovery and scanning.
 - Protect sleeping backing filesystems from optional user-share scans.

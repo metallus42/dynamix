@@ -233,6 +233,13 @@ array=""
 pools=""
 state_helper="$(dirname "$(readlink -f "$0")")/cache_dirs_state.php"
 io_state="/run/cache_dirs.io.$$"
+# PHP maps shared libraries larger than the legacy find-process VM allowance.
+# Restore only its inherited soft limit; keep administrator hard limits intact.
+state_helper_vmem=$(ulimit -Sv)
+read_pool_state() (
+  ulimit -Sv "$state_helper_vmem" || exit 1
+  php -d memory_limit=16M "$state_helper" "$io_state"
+)
 scan_roots=()
 pool_idle=0
 blocked_roots=1
@@ -242,7 +249,7 @@ refresh_scan_roots() {
   scan_roots=()
   pool_idle=0
   blocked_roots=1
-  if snapshot=$(php "$state_helper" "$io_state"); then
+  if snapshot=$(read_pool_state); then
     while read -r kind value; do
       case "$kind" in
         idle) pool_idle=$value ;;
@@ -537,7 +544,7 @@ log "$program_name version $version"
 #Try to play nice
 if [ "$ulimit_mem" -gt 0 ] ; then
   log "Setting Memory ulimit to $ulimit_mem"
-  ulimit -v "$ulimit_mem"
+  ulimit -Sv "$ulimit_mem"
 else
   log "No Memory ulimit applied"
 fi
@@ -603,7 +610,7 @@ fnc_time_since_last_disk_access() {
   # State lives in RAM because callers use command substitutions (subshells).
   # Keep this sample from replacing the targets selected for the current pass.
   local snapshot
-  if snapshot=$(php "$state_helper" "$io_state"); then
+  if snapshot=$(read_pool_state); then
     awk '$1 == "idle" {print $2}' <<< "$snapshot"
   else
     echo 0

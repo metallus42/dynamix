@@ -16,6 +16,7 @@ with tempfile.TemporaryDirectory() as temp:
     common = f'''
 {functions}
 log() {{ :; }}
+read_pool_state() {{ php; }}
 php() {{
   if [ "$scenario" = failure ]; then return 1; fi
   echo 'idle 60'

@@ -37,6 +37,7 @@ From the repository root:
 
 ```sh
 php tests/cache-dirs/state.php
+bash tests/cache-dirs/helper-limit.sh
 python3 tests/cache-dirs/scans.py
 bash -n source/cache-dirs/scripts/cache_dirs
 php -l source/cache-dirs/scripts/cache_dirs_state.php
@@ -49,3 +50,7 @@ an alternative version, never as a second daemon alongside the original.
 Back up `/boot/config/plugins/dynamix.cache.dirs/` before installing. Roll back
 through the official `unraid/dynamix` plugin manifest, preserving that settings
 backup. Repository creation and packaging do not install the fork on a server.
+
+The daemon retains its configured soft VM limit for directory scans. The PHP
+helper restores the inherited soft VM limit solely to load its shared libraries,
+with a 16 MiB PHP allocation limit; administrator hard limits are preserved.
