@@ -36,6 +36,7 @@ function cache_dirs_state(array $disks, array $previous, callable $stat, float $
             if ($memberDelay > 0) $holdSeconds = max($holdSeconds, $memberDelay * 60 + 60);
         }
         $rootDevices = [];
+        $rootActivity = false; $rootWake = false; $poolHold = 0;
         if (!$safe) $idle = 0;
         foreach ($members as $member) {
             $dev = $member['device'] ?? '';
@@ -63,6 +64,8 @@ function cache_dirs_state(array $disks, array $previous, callable $stat, float $
             $last = $changed ? $now : min($now, (float)($prior['last'] ?? $now));
             $holdUntil = ($prior['id'] ?? null) === $identity ? (float)($prior['hold_until'] ?? 0) : 0;
             $wake = ($prior['power'] ?? null) === '1' && $power === '0';
+            $rootActivity = $rootActivity || $changed;
+            $rootWake = $rootWake || $wake;
             if ($wake) $holdUntil = 0; // Let an externally awakened pool warm again.
             elseif ($holdUntil > 0 && $changed) $holdUntil = $now + $holdSeconds;
             $baseline = $scan[$dev] ?? null;
@@ -74,9 +77,17 @@ function cache_dirs_state(array $disks, array $previous, callable $stat, float $
             if ($holdUntil <= $now) $holdUntil = 0;
             $state['devices'][$dev] = ['id' => $identity, 'counters' => $counters, 'power' => $power, 'last' => $last,
                                      'hold_until' => $holdUntil];
-            if ($holdUntil > $now) { $safe = false; $held[$root] = max($held[$root] ?? 0, (int)ceil($holdUntil - $now)); }
+            $poolHold = max($poolHold, $holdUntil);
             if ($power === '0') $idle = min($idle, max(0, (int)($now - $last)));
         }
+        // A hold belongs to the whole pool: activity on a different RAID member
+        // must also restart its quiet window. Allow staggered member wake-ups.
+        if ($rootWake && $phase !== 'end') $poolHold = 0;
+        elseif ($poolHold > $now && $rootActivity) $poolHold = $now + $holdSeconds;
+        foreach ($rootDevices as $dev) {
+            if (isset($state['devices'][$dev])) $state['devices'][$dev]['hold_until'] = $poolHold;
+        }
+        if ($poolHold > $now) { $safe = false; $held[$root] = (int)ceil($poolHold - $now); }
         if ($safe) { $roots[] = $root; foreach ($rootDevices as $dev) $eligible[$dev] = $state['devices'][$dev]; }
         else $blocked = true;
     }

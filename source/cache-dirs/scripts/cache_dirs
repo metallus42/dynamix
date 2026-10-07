@@ -120,7 +120,7 @@
 #                change disk* to disk[0-9]* to avoid issues with the UD plugin
 # bergware
 ####################################################################################
-version=2.2.8-pool-backoff3
+version=2.2.8-pool-backoff4
 program_name=$(basename "$0")
 arg_count=$#
 

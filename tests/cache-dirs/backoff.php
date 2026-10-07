@@ -26,9 +26,10 @@ check(isset($b['state']['scan']), false, 'end consumes baseline even across inte
 $c = cache_dirs_state($disks, $b['state'], $read, 1900, 'boot', 'begin');
 check($c['roots'], ['/mnt/other','/mnt/cache'], 'still excluded after 30 minutes');
 check(isset($c['state']['scan']['sdb']), false, 'held disks never armed as scan targets');
-$stats['sdb'][4]++; // An external write during the hold resets the quiet window.
+$stats['sda'][4]++; // I/O on the OTHER pool member resets the whole quiet window.
 $d = cache_dirs_state($disks, $c['state'], $read, 1901, 'boot', 'end');
 check($d['held']['/mnt/main'], 1860, 'external activity extends pause');
+check($d['state']['devices']['sda']['hold_until'], $d['state']['devices']['sdb']['hold_until'], 'hold is shared by all pool members');
 check(in_array('/mnt/main', cache_dirs_state($disks, $d['state'], $read, 3760, 'boot')['roots']), false, 'no early retry');
 $expired = cache_dirs_state($disks, $d['state'], $read, 3761, 'boot');
 check(in_array('/mnt/main', $expired['roots']), true, 'retry after full quiet interval');
@@ -36,8 +37,11 @@ check($expired['state']['devices']['sdb']['hold_until'], 0, 'expired pause clear
 $disks['main']['spundown'] = $disks['main2']['spundown'] = '1';
 $sleep = cache_dirs_state($disks, $d['state'], $read, 2000, 'boot');
 check(in_array('/mnt/main', $sleep['roots']), false, 'sleeping pool remains excluded');
-$disks['main']['spundown'] = $disks['main2']['spundown'] = '0';
-$wake = cache_dirs_state($disks, $sleep['state'], $read, 2001, 'boot', 'begin');
+$disks['main']['spundown'] = '0';
+$partialWake = cache_dirs_state($disks, $sleep['state'], $read, 2000.5, 'boot');
+check(in_array('/mnt/main', $partialWake['roots']), false, 'partial wake still excluded');
+$disks['main2']['spundown'] = '0';
+$wake = cache_dirs_state($disks, $partialWake['state'], $read, 2001, 'boot', 'begin');
 check(in_array('/mnt/main', $wake['roots']), true, 'external wake permits warming again');
 $warm = cache_dirs_state($disks, $wake['state'], $read, 2002, 'boot', 'end');
 check($warm['held'], [], 'RAM-only scan does not pause');
